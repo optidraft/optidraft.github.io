@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <title>OptiDraft</title>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+        <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+        <link rel="stylesheet" href="./static/amis/sdk.css" />
+        <link rel="stylesheet" href="./static/amis/helper.css" />
+        <link rel="stylesheet" href="./static/amis/iconfont.css" />
+        <style>
+            html,
+            body,
+            .app-wrapper {
+                position: relative;
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            .amis-scope .cxd-Cards-actions {
+              display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="root" class="app-wrapper"></div>
+        <script src="./static/amis/sdk.js"></script>
+        <script type="text/javascript">
+          var champs
+          var score;
+          var ally = [];
+          var oppo = [];
+          var winrate = 50;
+
+          function addChamps(arr, tar) {
+            tar.push(...arr);
+          }
+
+          function removeChamps(arr, tar) {
+            return tar.filter(champ => !arr.includes(champ));
+          }
+
+          function logistic(x) {
+              return 1 / (1 + Math.exp(-x));
+          }
+
+          function f(s1, s2, c) {
+            let result = logistic(1.328 * s1 - 2.52 * s2 + 1.145 * c);
+            return (result * 100).toFixed(2);
+          }
+
+          function computeSynergy(arr) {
+            let id1, id2, s;
+            let ts = 0;
+            let n = 0;
+
+            for (let i = 0; i < arr.length; i++) {
+              id1 = arr[i].id;
+
+              for (let j = i + 1; j < arr.length; j++) {
+                id2 = arr[j].id;
+
+                if (id1 < id2) {
+                  s = score[`${id1}-${id2}`]['s'];
+                } else {
+                  s = score[`${id2}-${id1}`]['s'];
+                }
+
+                if (s != 0) {
+                  ts += s;
+                  n += 1;
+                }
+              }
+            }
+
+            if (n == 0) {
+              return 0;
+            } else {
+              return ts / n;
+            }
+          }
+
+          function computeCounter(arr1, arr2) {
+            let id1, id2, c;
+            let tc = 0;
+            let n = 0;
+
+            for (let i = 0; i < arr1.length; i++) {
+              id1 = arr1[i].id;
+
+              for (let j = 0; j < arr2.length; j++) {
+                id2 = arr2[j].id;
+
+                if (id1 < id2) {
+                  c = score[`${id1}-${id2}`]['c'];
+                } else {
+                  c = 1 - score[`${id2}-${id1}`]['c'];
+                }
+
+                if (c != 0 && c != 1) {
+                  tc += c;
+                  n += 1;
+                }
+              }
+            }
+
+            if (n == 0) {
+              return 0;
+            } else {
+              return tc / n;
+            }
+          }
+
+          function computeScore(arr1, arr2) {
+            let s1 = computeSynergy(arr1);
+            let s2 = computeSynergy(arr2);
+            let c = computeCounter(arr1, arr2);
+
+            return f(s1, s2, c);
+          }
+
+          function rankChamps(method) {
+            if (method == "winRate") {
+              champs = champs.map(champ => ({ ...champ, winRate: champ.w })).sort((a, b) => b.winRate - a.winRate);
+            } else {
+              champs.sort((a, b) => b.winRate - a.winRate);
+            }
+          }
+
+          function updateScore() {
+            if (ally.length == 5) {
+              return;
+            }
+
+            let arr1;
+            let score;
+
+            for (let i = 0; i < champs.length; i++) {
+              arr1 = [...ally, champs[i]];
+              score = computeScore(arr1, oppo);
+              champs[i].winRate = score;
+            }
+
+            rankChamps("score");
+          }
+
+          function updateList() {
+            if (ally.length + oppo.length <= 1) {
+              if (ally.length == 0 && oppo.length == 0) {
+                winrate = 50;
+                rankChamps("winRate");
+              } else if (ally.length == 1) {
+                winrate = ally[0].winRate;
+                updateScore();
+              } else {
+                winrate = 100 - oppo[0].winRate;
+                updateScore();
+              }
+            } else {
+              winrate = computeScore(ally, oppo);
+              updateScore();
+            }
+          }
+
+
+          fetch('./static/data.json')
+            .then(response => response.json())
+            .then(data => {
+              champs = data["champs"];
+              score = data["score"];
+
+              (function () {
+                let amis = amisRequire('amis/embed');
+                let amisJSON = {
+                  "type": "page",
+                  "body": {
+                    "type": "flex",
+                    "justify": "space-between",
+                    "items": [
+                      {
+                        "type": "crud",
+                        "id": "ally",
+                        "api": "./static/empty.json",
+                        "source": "${window:ally}",
+                        "syncLocation": false,
+                        "loadDataOnce": true,
+                        "className": "w-lg",
+                        "headerToolbar": [
+                          {
+                            "type": "tpl",
+                            "tpl": "<h2>Ally Win Rate: ${window:winrate | round}</h2>"
+                          }
+                        ],
+                        "columnsCount": 1,
+                        "mode": "cards",
+                        "card": {
+                          "header": {
+                            "title": "${name}",
+                            "avatar": "${avatar}",
+                            "avatarClassName": "w-xxs"
+                          }
+                        }
+                      }, 
+                      {
+                        "type": "crud",
+                        "id": "draft",
+                        "api": "./static/empty.json",
+                        "source": "${window:champs}",
+                        "syncLocation": false,
+                        "loadDataOnce": true,
+                        "autoFillHeight": true,
+                        "checkOnItemClick": true,
+                        "columns": [
+                          {
+                            "type": "avatar",
+                            "src": "${avatar}",
+                            "shape": "square"
+                          },
+                          {
+                            "name": "name"
+                          },
+                          {
+                            "label": "Ally Win Rate",
+                            "name": "winRate"
+                          }
+                        ],
+                        "headerToolbar": ["bulkActions"],
+                        "bulkActions": [
+                          {
+                            "type": "button",
+                            "label": "Choose for ally",
+                            "level": "primary",
+                            "disabledOn": "ally.length + this.selectedItems.length > 5",
+                            "onEvent": {
+                              "click": {
+                                "actions": [
+                                  {
+                                    "actionType": "custom",
+                                    "script": "addChamps(event.data.selectedItems, ally);\
+                                                 champs = removeChamps(event.data.selectedItems, champs);\
+                                                 updateList();"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "ally"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "oppo"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "draft"
+                                  }
+                                ]
+                              }
+                            }
+                          },
+                          {
+                            "type": "button",
+                            "label": "Choose for opponent",
+                            "level": "danger",
+                            "disabledOn": "oppo.length + this.selectedItems.length > 5",
+                            "onEvent": {
+                              "click": {
+                                "actions": [
+                                  {
+                                    "actionType": "custom",
+                                    "script": "addChamps(event.data.selectedItems, oppo);\
+                                                 champs = removeChamps(event.data.selectedItems, champs);\
+                                                 updateList();"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "ally"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "oppo"
+                                  },
+                                  {
+                                    "actionType": "reload",
+                                    "componentId": "draft"
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      {
+                        "type": "crud",
+                        "id": "oppo",
+                        "api": "./static/empty.json",
+                        "source": "${window:oppo}",
+                        "syncLocation": false,
+                        "loadDataOnce": true,
+                        "className": "w-lg",
+                        "headerToolbar": [
+                          {
+                            "type": "tpl",
+                            "tpl": "<h2>Opponent Win Rate: ${100 - window:winrate | round}</h2>"
+                          }
+                        ],
+                        "columnsCount": 1,
+                        "mode": "cards",
+                        "card": {
+                          "header": {
+                            "title": "${name}",
+                            "avatar": "${avatar}",
+                            "avatarClassName": "w-xxs"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                };
+                let amisScoped = amis.embed('#root', amisJSON, { locale: 'en-US' });
+              })();
+            })
+            .catch(error => {
+              console.error('Error:', error);
+            });
+        </script>
+    </body>
+</html>
